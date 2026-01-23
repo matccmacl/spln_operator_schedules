@@ -1,1 +1,7 @@
 streamlit
+pandas
+google-api-python-client
+google-auth
+st-gsheets-connection
+pdfplumber
+openpyxl
