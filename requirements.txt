@@ -5,4 +5,4 @@ google-auth
 st-gsheets-connection
 pdfplumber
 openpyxl
-camelot
+camelot-py
