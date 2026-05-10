@@ -6,14 +6,10 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
 import io
+from config import MALDIVIAN_FOLDER_ID, SHEET_URL, LOG_WORKSHEET
 
 st.set_page_config(page_title="Seaplane File Ingestion", layout="wide")
 st.title("Seaplane Schedule Ingestion")
-
-# Constants
-MALDIVIAN_FOLDER_ID = "1yL63EAYl7HLh0rgsIvJfNzWkBWUH0OT9"
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1yJLPasQSRxUC9Ad1-e0k62aSY0ibVzwbwz8e14fDrBY/"
-LOG_WORKSHEET = "uploaded_files"
 
 def get_drive_service():
     """Returns a Google Drive service object using service account secrets."""
