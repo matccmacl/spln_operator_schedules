@@ -1,3 +1,30 @@
+[theme]
+base = "light"
+
+# Google Material Light color palette
+textColor = "#3c4043"
+primaryColor = "#1a73e8"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9fa"
+
+# Widgets
+showWidgetBorder = true
+borderColor = "#dadce0"
+
+# Dataframes
+dataframeHeaderBackgroundColor = "#f1f3f4"
+
+# Base text (preserving your Space Grotesk preference)
+font = "'Geist':https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap"
+baseFontWeight = 400
+baseFontSize = 14
+
+# Heading text
+headingFont = "Geist"
+headingFontWeights = [500, 400, 400, 400, 400, 400]
+headingFontSizes = ["2.5rem", "1.5rem", "1rem"]
+
 [server]
+headless = true
 enableCORS = false
 enableXsrfProtection = false
