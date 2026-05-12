@@ -104,19 +104,19 @@ def generate_performance_visuals(df):
     view_label = f"{selected_month} (Summary)" if selected_day == "All Days" else selected_day.strftime('%d %b %Y')
 
     # --- KPI DISPLAY ---
-    st.header(f"✈️ Seaplane Ops: {view_label}")
+    st.header(f"Seaplane Ops: {view_label}")
     
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total Movements", f"{len(plot_df):,}")
+    k1.metric("Total Movements", f"{len(plot_df):,}", border=True)
     
     if 'DIRECTION' in plot_df.columns:
         tos = len(plot_df[plot_df['DIRECTION'] == 'TAKEOFF'])
         lds = len(plot_df[plot_df['DIRECTION'] == 'LANDING'])
-        k2.metric("Takeoffs", f"{tos:,}")
-        k3.metric("Landings", f"{lds:,}")
+        k2.metric("Takeoffs", f"{tos:,}", border=True)
+        k3.metric("Landings", f"{lds:,}", border=True)
 
     # --- OPERATOR GRID ---
-    st.divider()
+    #st.divider()
     st.subheader("Operator Volume")
     operators = plot_df['AIRLINE'].unique().tolist()
     op_cols = st.columns(max(len(operators), 1))
@@ -124,7 +124,7 @@ def generate_performance_visuals(df):
     for i, op in enumerate(operators):
         op_df = plot_df[plot_df['AIRLINE'] == op]
         with op_cols[i]:
-            st.metric(f"{op}", f"{len(op_df):,}")
+            st.metric(f"{op}", f"{len(op_df):,}", border=True)
 
     # --- CHARTS ---
     st.divider()

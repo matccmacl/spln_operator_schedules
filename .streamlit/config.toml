@@ -1,30 +1,58 @@
-[theme]
-base = "light"
-
-# Google Material Light color palette
-textColor = "#3c4043"
-primaryColor = "#1a73e8"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f8f9fa"
-
-# Widgets
-showWidgetBorder = true
-borderColor = "#dadce0"
-
-# Dataframes
-dataframeHeaderBackgroundColor = "#f1f3f4"
-
-# Base text (preserving your Space Grotesk preference)
-font = "'Geist':https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap"
-baseFontWeight = 400
-baseFontSize = 14
-
-# Heading text
-headingFont = "Geist"
-headingFontWeights = [500, 400, 400, 400, 400, 400]
-headingFontSizes = ["2.5rem", "1.5rem", "1rem"]
-
 [server]
-headless = true
-enableCORS = false
-enableXsrfProtection = false
+enableStaticServing = true
+
+[[theme.fontFaces]]
+family = "DMSans"
+url = "app/static/DMSans-Regular.ttf"
+style = "normal"
+weight = 400
+
+[[theme.fontFaces]]
+family = "DMSans"
+url = "app/static/DMSans-Medium.ttf"
+style = "normal"
+weight = 500
+
+[[theme.fontFaces]]
+family = "DMSans"
+url = "app/static/DMSans-SemiBold.ttf"
+style = "normal"
+weight = 600
+
+[[theme.fontFaces]]
+family = "DMSans"
+url = "app/static/DMSans-Bold.ttf"
+style = "normal"
+weight = 700
+
+[[theme.fontFaces]]
+family = "FiraCode"
+url = "app/static/FiraCode-Regular.ttf"
+style = "normal"
+weight = 400
+
+[[theme.fontFaces]]
+family = "FiraCode"
+url = "app/static/FiraCode-Medium.ttf"
+style = "normal"
+weight = 500
+
+[theme]
+# 🚀 MODERN STARTUP PALETTE 🚀
+primaryColor = "#8b5cf6"             # Purple-500 - modern, trendy, growth-focused
+backgroundColor = "#ffffff"          # Pure white - clean, modern foundation
+secondaryBackgroundColor = "#fafafa" # Neutral-50 - subtle modern gray
+textColor = "#18181b"                # Zinc-900 - high contrast, modern
+linkColor = "#7c3aed"                # Purple-600 - slightly darker for links
+borderColor = "#e4e4e7"              # Zinc-200 - clean, modern borders
+showWidgetBorder = true
+baseRadius = "0.75rem"               # Generous rounding - modern, friendly
+font = "DMSans"                      # DM Sans - modern startup-style typography
+headingFont = "DMSans"               # Consistent hierarchy
+codeFont = "FiraCode"                # Fira Code - popular developer monospace
+codeBackgroundColor = "#f4f4f5"      # Zinc-100 - subtle code background
+showSidebarBorder = true
+
+[theme.sidebar]
+backgroundColor = "#fafafa"          # Neutral-50 - clean sidebar
+secondaryBackgroundColor = "#f4f4f5" # Zinc-100 - subtle sections
