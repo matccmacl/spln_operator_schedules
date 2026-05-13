@@ -10,7 +10,7 @@ except ImportError:
 
 def main():
     st.set_page_config(page_title="Analytics Test Environment", layout="wide")
-    st.title("📊 Master Schedule Analytics Test")
+    st.title("Master Schedule Analytics Test")
 
     if not SCHEDULES_SHEET_URL or not SCHEDULES_WS:
         st.warning("Check config.py for SCHEDULES_SHEET_URL and SCHEDULES_WS")
