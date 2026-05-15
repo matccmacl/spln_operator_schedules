@@ -46,4 +46,12 @@ For any complex task, structure the execution:
 2. **Implement:** Execute the code generation.  
 3. **Verify:** Self-correct by checking if the implementation meets the "Success Criteria" (e.g., "The button now triggers the API," "The logic handles null values").
 
+## **5\. UI & Iconography**
+ 
+**Use Streamlit-native Material Icons for all UI elements.**
+ 
+* **Standardization:** Avoid using standard emojis in the codebase. Use the `:material/icon_name:` syntax instead.
+* **Consistency:** Ensure icons align with the action or data they represent (e.g., `:material/flight_takeoff:` for departures).
+* **Documentation:** Apply the same standard to Markdown files (headers, lists) using text-based representations where possible or Material-inspired labels.
+ 
 **Success Metric:** These guidelines are effective if the resulting files are clean, require zero immediate refactoring, and solve the user's problem with the first generation.

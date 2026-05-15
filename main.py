@@ -1,130 +1,284 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
 import io
-from config import MALDIVIAN_FOLDER_ID, SHEET_URL, LOG_WORKSHEET
+import time
+import os
 
-st.set_page_config(page_title="Seaplane File Ingestion", layout="wide")
-st.title("Seaplane Schedule Ingestion")
+# Internal Imports
+import database
+from processors import process_file
+from insights_module import load_master_data, generate_performance_visuals
 
-def get_drive_service():
-    """Returns a Google Drive service object using service account secrets."""
-    try:
-        service_account_info = st.secrets["connections"]["gsheets"]
-        creds = service_account.Credentials.from_service_account_info(
-            service_account_info,
-            scopes=["https://www.googleapis.com/auth/drive"]
-        )
-        return build('drive', 'v3', credentials=creds)
-    except Exception as e:
-        st.error(f"Failed to initialize Drive service: {e}")
-        return None
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Seaplane Ops Dashboard", layout="wide", page_icon=":material/flight:")
 
-def upload_to_drive(file_name, file_content, folder_id):
-    """
-    Uploads file to Drive and returns the webViewLink.
-    """
-    service = get_drive_service()
-    if not service:
-        return None, None
-
-    file_metadata = {'name': file_name, 'parents': [folder_id]}
-    media = MediaIoBaseUpload(io.BytesIO(file_content),
-                              mimetype='application/pdf',
-                              resumable=True)
-
-    try:
-        file = service.files().create(body=file_metadata,
-                                      media_body=media,
-                                      fields='id, webViewLink').execute()
-        return file.get('id'), file.get('webViewLink')
-    except Exception as e:
-        st.error(f"Drive upload failed: {e}")
-        return None, None
+# --- UTILS ---
+# --- DATABASE INIT ---
+if 'db_init' not in st.session_state:
+    database.init_db()
+    st.session_state['db_init'] = True
 
 def check_duplicate(filename):
-    """
-    Checks if the filename already exists in the 'uploaded_files' sheet.
-    Uses ttl=0 to ensure we always get the latest data from the sheet.
-    """
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        # ttl=0 ensures we don't use cached data for duplicate checks
-        log_df = conn.read(spreadsheet=SHEET_URL, worksheet=LOG_WORKSHEET, ttl=0)
+    """Checks the local SQLite database for previously processed files."""
+    return database.check_file_processed_local(filename)
 
-        if not log_df.empty and 'Filename' in log_df.columns:
-            # Strip whitespace to ensure match works correctly
-            existing_files = log_df['Filename'].astype(str).str.strip().tolist()
-            return filename.strip() in existing_files
-    except Exception as e:
-        st.warning(f"Note: Could not verify duplicates (Log sheet might be empty or inaccessible). Error: {e}")
-        return False
-    return False
+# --- SESSION STATE FOR NAVIGATION ---
+if 'page' not in st.session_state:
+    st.session_state['page'] = "Operational Analytics"
 
-# UI Section
-uploaded_file = st.file_uploader("Choose a schedule file to upload", type=["pdf", "xlsx", "xls"])
-
-if uploaded_file is not None:
-    filename = uploaded_file.name
-
-    st.info(f"Checking for existing record of `{filename}`...")
-    is_duplicate = check_duplicate(filename)
-
-    if is_duplicate:
-        st.error(f"🚫 **Duplicate Found:** The file `{filename}` has already been uploaded to the system. Upload blocked.")
-        if st.button("I understand, but process this local file anyway"):
-            st.session_state['ready_to_process'] = True
-            st.session_state['current_filename'] = filename
-    else:
-        st.success(f"✅ `{filename}` is a new file.")
-        if st.button("🚀 Upload and Log File"):
-            with st.status("Initializing Ingestion...", expanded=True) as status:
-                # 1. Upload to Drive
-                st.write("Uploading to Google Drive...")
-                file_id, file_url = upload_to_drive(filename, uploaded_file.getvalue(), MALDIVIAN_FOLDER_ID)
-
-                if file_id and file_url:
-                    # 2. Log to GSheets
-                    st.write("Logging metadata to Google Sheets...")
-                    conn = st.connection("gsheets", type=GSheetsConnection)
-
-                    # Fetch current log without cache to avoid overwriting
-                    current_log = conn.read(spreadsheet=SHEET_URL, worksheet=LOG_WORKSHEET, ttl=0)
-
-                    # Prepare new entry
-                    new_entry = pd.DataFrame([{
-                        "Filename": filename,
-                        "File URL": file_url,
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    }])
-
-                    # Ensure columns match even if sheet was empty/differently structured
-                    if current_log.empty:
-                        updated_log = new_entry
-                    else:
-                        updated_log = pd.concat([current_log, new_entry], ignore_index=True)
-
-                    # Update the sheet with the full combined dataframe
-                    conn.update(spreadsheet=SHEET_URL, worksheet=LOG_WORKSHEET, data=updated_log)
-
-                    status.update(label="File Ingested Successfully!", state="complete")
-                    st.success(f"File logged and saved. [View File]({file_url})")
-
-                    # 3. Set state to prompt for processing
-                    st.session_state['ready_to_process'] = True
-                    st.session_state['current_filename'] = filename
-                else:
-                    status.update(label="Upload Failed", state="error")
-
-# Processing Prompt (appears after successful upload or duplicate bypass)
-if st.session_state.get('ready_to_process'):
+# --- SIDEBAR NAVIGATION ---
+with st.sidebar:
+    st.markdown("### :material/flight: Air Traffic Services")
     st.divider()
-    st.subheader("Ready for Processing")
-    st.write(f"The file `{st.session_state['current_filename']}` is staged. Would you like to proceed with data extraction?")
+    
+    st.write("Navigation")
+    if st.button(":material/analytics: Operational Analytics", use_container_width=True, type="secondary" if st.session_state['page'] == "File Ingestion" else "primary"):
+        st.session_state['page'] = "Operational Analytics"
+        st.rerun()
+        
+    if st.button(":material/upload_file: File Ingestion", use_container_width=True, type="secondary" if st.session_state['page'] == "Operational Analytics" else "primary"):
+        st.session_state['page'] = "File Ingestion"
+        st.rerun()
+        
+    st.divider()
+    with st.expander("🛠️ Developer Tools"):
+        # Display DB Size
+        db_size = database.get_db_size()
+        st.write(f":material/database: **DB Size:** `{db_size}`")
+        
+        if st.button("Clear Local SQLite DB", use_container_width=True):
+            database.clear_data()
+            st.success("Local database wiped.")
+            time.sleep(1)
+            st.rerun()
+            
+        st.divider()
+        st.write("Inspect Database")
+        
+        @st.dialog("Database Viewer", width="large")
+        def view_db_table(table_name):
+            st.write(f"### Table: {table_name}")
+            if table_name == "movements":
+                df = database.get_all_movements()
+            elif table_name == "registrations":
+                df = database.get_all_registrations()
+            else:
+                files_df = database.get_all_filenames()
+                # ... existing file management logic ...
+                if files_df.empty:
+                    st.info("No processed files found.")
+                else:
+                    search = st.text_input(":material/search: Search Files", placeholder="Enter filename...")
+                    if search:
+                        files_df = files_df[files_df['filename'].str.contains(search, case=False)]
+                    
+                    if 'Select' not in files_df.columns:
+                        files_df.insert(0, "Select", False)
+                    
+                    edited_df = st.data_editor(
+                        files_df,
+                        hide_index=True,
+                        column_config={
+                            "Select": st.column_config.CheckboxColumn(default=False),
+                            "filename": st.column_config.TextColumn("Filename", width="large"),
+                            "timestamp": st.column_config.TextColumn("Processed At", width="medium"),
+                            "id": None 
+                        },
+                        disabled=["filename", "timestamp"],
+                        width="stretch",
+                        key="file_editor"
+                    )
+                    
+                    selected_files = edited_df[edited_df["Select"] == True]["filename"].tolist()
+                    if selected_files:
+                        st.divider()
+                        st.warning(f":material/warning: **Bulk Delete:** {len(selected_files)} file(s) selected.")
+                        if st.button(f"Confirm Delete ({len(selected_files)})", type="primary", use_container_width=True):
+                            for fname in selected_files:
+                                database.delete_file(fname)
+                            st.success("Selected files deleted successfully.")
+                            time.sleep(1)
+                            st.rerun()
 
-    if st.button("⚙️ Start Data Extraction"):
-        st.info("Processing logic will go here in the next step.")
+            if table_name in ["movements", "registrations"] and not df.empty:
+                st.dataframe(df, width="stretch")
+            elif table_name in ["movements", "registrations"] and df.empty:
+                st.info("Table is empty.")
+
+            if st.button("Close"):
+                st.rerun()
+
+        if st.button("View Movements", width="stretch"):
+            view_db_table("movements")
+        if st.button("View Registrations", width="stretch"):
+            view_db_table("registrations")
+        if st.button("View Processed Files", width="stretch"):
+            view_db_table("processed_files")
+            
+        st.divider()
+        st.write("##### Bulk Data Operations")
+        if st.button("Seed Registrations from CSV", width="stretch"):
+            success, msg = database.seed_registrations()
+            if success:
+                st.success(msg)
+            else:
+                st.error(msg)
+        
+        # Dynamic Bulk Ingestion for multiple files
+        bulk_files = [f for f in os.listdir("scratch") if f.startswith("clnd_schdls_") and f.endswith(".csv")]
+        
+        for b_file in sorted(bulk_files):
+            if st.button(f"Ingest: {b_file}", width="stretch"):
+                bulk_path = os.path.join("scratch", b_file)
+                with st.spinner(f"Ingesting {b_file}..."):
+                    success, msg = database.ingest_bulk_csv(bulk_path)
+                if success:
+                    st.success(msg)
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    st.info("Seaplane Ops v1.2 (SQLite-only)")
+
+st.title(":material/flight: Seaplane Operator Schedule Dashboard")
+
+if st.session_state['page'] == "File Ingestion":
+    st.header("Upload & Process Schedules")
+    
+    # --- QUEUE INITIALIZATION ---
+    if 'ingestion_queue' not in st.session_state:
+        st.session_state['ingestion_queue'] = []
+    if 'uploader_key' not in st.session_state:
+        st.session_state['uploader_key'] = 0
+    if 'df_extracted' not in st.session_state:
+        st.session_state['df_extracted'] = None
+    if 'extracted_filename' not in st.session_state:
+        st.session_state['extracted_filename'] = None
+
+    # --- UPLOADER ---
+    # Only show uploader if we're not currently processing a file preview
+    # This keeps the UI focused
+    if not st.session_state['ingestion_queue']:
+        st.markdown("### :material/upload_file: Step 1: Upload Schedules")
+        uploaded_files = st.file_uploader(
+            "Choose one or more schedule files (PDF/Excel)", 
+            type=["pdf", "xlsx", "xls"],
+            accept_multiple_files=True,
+            key=f"uploader_{st.session_state['uploader_key']}"
+        )
+        
+        if uploaded_files:
+            # Move files to queue and reset uploader
+            st.session_state['ingestion_queue'].extend(uploaded_files)
+            st.session_state['uploader_key'] += 1
+            st.rerun()
+    
+    # --- QUEUE PROCESSING ---
+    if st.session_state['ingestion_queue']:
+        queue = st.session_state['ingestion_queue']
+        current_file = queue[0]
+        filename = current_file.name
+        
+        st.info(f":material/list: **Ingestion Queue:** {len(queue)} file(s) pending. Currently reviewing: `{filename}`")
+        
+        # --- STEP 1: EXTRACTION (Auto-run for current file) ---
+        if st.session_state['df_extracted'] is None:
+            # CHECK FOR DUPLICATE
+            if check_duplicate(filename) and not st.session_state.get('bypass_duplicate'):
+                st.error(f":material/block: **Duplicate Found:** `{filename}` has already been uploaded.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Ignore and process anyway"):
+                        st.session_state['bypass_duplicate'] = True
+                        st.rerun()
+                with c2:
+                    if st.button("Skip this file"):
+                        st.session_state['ingestion_queue'].pop(0)
+                        st.rerun()
+                st.stop() # Wait for user action
+
+            with st.status(f"Processing `{filename}`...", expanded=True) as status:
+                # 1. Data Extraction
+                st.write("Running extraction engine...")
+                df_processed, error = process_file(io.BytesIO(current_file.getvalue()), filename)
+                
+                if error:
+                    status.update(label="Extraction Failed", state="error")
+                    st.error(f":material/cancel: **Error Details:** {error}")
+                    if st.button("Skip this file"):
+                        st.session_state['ingestion_queue'].pop(0)
+                        st.rerun()
+                else:
+                    # Save to session state for the next step
+                    st.session_state['df_extracted'] = df_processed
+                    st.session_state['extracted_filename'] = filename
+                    status.update(label="Extraction Complete!", state="complete")
+                    st.rerun()
+
+        # --- STEP 2: PREVIEW & CONFIRMATION ---
+        else:
+            df_processed = st.session_state['df_extracted']
+            
+            # 1. Date Verification
+            st.markdown("### :material/calendar_month: Step 2: Verify Schedule Date")
+            current_date = df_processed['DATE TIME LOCAL'].iloc[0].date() if not df_processed.empty else datetime.now().date()
+            selected_date = st.date_input("The system detected the following date. Please correct if necessary:", value=current_date)
+            
+            if selected_date != current_date:
+                # Recalculate timestamps
+                st.write("Updating timestamps...")
+                df_processed['DATE TIME LOCAL'] = df_processed['DATE TIME LOCAL'].apply(
+                    lambda dt: dt.replace(year=selected_date.year, month=selected_date.month, day=selected_date.day)
+                )
+                df_processed['DATE TIME UTC'] = df_processed['DATE TIME LOCAL'] - pd.Timedelta(hours=5)
+                st.session_state['df_extracted'] = df_processed
+                st.rerun()
+
+            with st.expander(":material/analytics: Preview Extracted Data", expanded=True):
+                st.dataframe(df_processed, use_container_width=True, hide_index=True)
+            
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                if st.button(":material/cancel: Cancel/Skip", use_container_width=True):
+                    st.session_state['ingestion_queue'].pop(0)
+                    st.session_state['df_extracted'] = None
+                    st.session_state['extracted_filename'] = None
+                    st.rerun()
+            with c2:
+                if st.button(":material/check_circle: Confirm & Save to Database", type="primary", use_container_width=True):
+                    with st.status("Finalizing Ingestion...", expanded=True) as status:
+                        # 1. SAVE TO LOCAL SQLITE
+                        st.write("Saving to Local Database...")
+                        # Add filename tag for cascading deletes
+                        df_processed['FILENAME'] = filename
+                        
+                        # Normalize REG to 8Q- format
+                        if 'REG' in df_processed.columns:
+                            df_processed['REG'] = df_processed['REG'].astype(str).str.replace('8Q', '8Q-', regex=False).str.replace('8Q--', '8Q-', regex=False)
+
+                        database.save_movements(df_processed)
+                        database.log_file_local(filename)
+                        
+                        # D. CLEANUP & NEXT IN QUEUE
+                        st.session_state['ingestion_queue'].pop(0)
+                        st.session_state['df_extracted'] = None
+                        st.session_state['extracted_filename'] = None
+                        status.update(label="Ingestion Successful!", state="complete")
+                        st.success(f"Successfully processed `{filename}`.")
+                        if not st.session_state['ingestion_queue']:
+                            st.balloons()
+                        time.sleep(1)
+                        st.rerun()
+
+
+
+else: # Operational Analytics
+    st.header("Fleet Operational Insights")
+    # Load using the modular insights engine
+    master_data = load_master_data()
+    if not master_data.empty:
+        generate_performance_visuals(master_data)
+    else:
+        st.info("No operational data available in the local database. Please ingest schedules in the Ingestion page.")

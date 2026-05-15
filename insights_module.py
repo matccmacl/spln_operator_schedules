@@ -2,68 +2,92 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from streamlit_gsheets import GSheetsConnection
+import database # Local SQLite module
 
-# Import your secret config
-try:
-    from config import SCHEDULES_SHEET_URL, SCHEDULES_WS
-except ImportError:
-    st.error("config.py not found or missing variables.")
-    SCHEDULES_SHEET_URL = None
-    SCHEDULES_WS = "spln_schedules" 
-
-@st.cache_data(ttl=3600, show_spinner="Syncing with Master Log...")
-def load_master_data(spreadsheet_url, worksheet_name):
+@st.cache_data(ttl=60, show_spinner="Syncing with Local Database...")
+def load_master_data():
     """
-    Loads master flight data and maps the final finalized headers to dashboard schema.
+    Loads master flight data from SQLite (High Performance).
     """
-    if not spreadsheet_url:
-        return pd.DataFrame()
-        
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(
-            spreadsheet=spreadsheet_url, 
-            worksheet=worksheet_name,
-            ttl=0 
-        )
+        # 1. LOAD FROM SQLITE
+        df = database.get_all_movements()
+        reg_df = database.get_all_registrations()
         
         if df.empty:
             return df
 
-        # --- FINALIZED COLUMN MAPPING ---
-        # Maps your exact Google Sheet headers to internal Dashboard logic
-        column_map = {
-            'DATE-TIME': 'DATE TIME UTC',
-            'DT.LOCAL': 'DATE TIME LOCAL',
-            'FLT NO': 'FLT NUMBER',
-            'CALL SIGN': 'REG',
-            'MOVEMENT': 'DIRECTION'
-        }
-        
-        # Rename columns to match internal standard
-        df = df.rename(columns=column_map)
+        # 2. ENFORCE RELATIONSHIP (JOIN)
+        # We join on 'REG' to bring in SPECIES, MTOW, etc.
+        if not reg_df.empty:
+            # Ensure REG columns are strings and stripped for the join
+            df['REG'] = df['REG'].astype(str).str.strip().str.upper()
+            reg_df['REG'] = reg_df['REG'].astype(str).str.strip().str.upper()
+            
+            # Left join: keep all movements, add registration details where available
+            df = df.merge(reg_df[['REG', 'SPECIES', 'MTOW', 'AC TYPE']], on='REG', how='left')
 
         # --- DATA CLEANING & OPTIMIZATION ---
-        # 1. Parse Primary UTC Timestamp
-        if 'DATE TIME UTC' in df.columns:
-            df['DATE TIME UTC'] = pd.to_datetime(df['DATE TIME UTC'], errors='coerce')
+        # 1. Parse Timestamps
+        for col in ['DATE TIME UTC', 'DATE TIME LOCAL']:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
         
-        # 2. Normalize Direction (TAKEOFF/LANDING)
+        # 2. Normalize Direction
         if 'DIRECTION' in df.columns:
-            # Ensure it's uppercase string for consistent logic across all operators
             df['DIRECTION'] = df['DIRECTION'].astype(str).str.upper().str.strip()
+            df = df[df['DIRECTION'].isin(['TAKEOFF', 'LANDING'])]
             df['DIRECTION'] = df['DIRECTION'].astype('category')
 
-        # 3. Memory Optimization for large datasets
-        if 'AIRLINE' in df.columns:
-            df['AIRLINE'] = df['AIRLINE'].astype('category')
+        # 3. Memory Optimization
+        for col in ['AIRLINE', 'REG', 'FROM', 'TO']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).astype('category')
             
         return df
         
     except Exception as e:
-        st.error(f"Error loading worksheet '{worksheet_name}': {e}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
+
+
+def _render_operator_metrics(data_df):
+    """
+    Renders KPIs and Operator Volume grid for a given dataframe.
+    """
+    # --- KPIs ---
+    with st.container(border=True):
+        with st.container(border=True):
+            st.metric("Total Movements", f"{len(data_df):,}")
+        with st.container(horizontal=True):
+            st.metric(":material/flight_takeoff: Takeoffs", f"{len(data_df[data_df['DIRECTION'] == 'TAKEOFF']):,}", border=True)
+            st.metric(":material/flight_land: Landings", f"{len(data_df[data_df['DIRECTION'] == 'LANDING']):,}", border=True)
+    
+    # --- OPERATOR GRID ---
+    st.markdown("###### Operator Volume".upper())
+    # Sort operators by volume (descending)
+    op_counts = data_df['AIRLINE'].value_counts()
+    operators = op_counts[op_counts > 0].index.tolist()
+    
+    for i in range(0, len(operators), 2):
+        grid_cols = st.columns(2)
+        for j in range(2):
+            if i + j < len(operators):
+                op = operators[i + j]
+                op_df = data_df[data_df['AIRLINE'] == op]
+                with grid_cols[j]:
+                    with st.container(border=True):
+                        st.write(f"**{op}**")
+                        
+                        # Internal breakdown for the operator
+                        op_to = len(op_df[op_df['DIRECTION'] == 'TAKEOFF'])
+                        op_ld = len(op_df[op_df['DIRECTION'] == 'LANDING'])
+                        
+                        with st.container(horizontal=True, horizontal_alignment="right"):
+                            st.metric("Total", f"{len(op_df):,}", border=True )
+                        with st.container(horizontal=True, horizontal_alignment="right"):
+                            st.metric(":material/flight_takeoff: TAKEOFFS", f"{op_to:,}", border=True)
+                            st.metric(":material/flight_land: LANDINGS", f"{op_ld:,}", border=True)
 
 def generate_performance_visuals(df):
     """
@@ -84,6 +108,8 @@ def generate_performance_visuals(df):
 
     # --- FEATURE ENGINEERING ---
     df['Month'] = df['DATE TIME UTC'].dt.strftime('%b %Y')
+    df['MonthName'] = df['DATE TIME UTC'].dt.strftime('%B')
+    df['Year'] = df['DATE TIME UTC'].dt.year
     df['Day'] = df['DATE TIME UTC'].dt.date
     df['Hour'] = df['DATE TIME UTC'].dt.hour
     df['Minute'] = df['DATE TIME UTC'].dt.minute
@@ -104,39 +130,9 @@ def generate_performance_visuals(df):
         t_cols = st.columns([1, 2])
 
         with t_cols[0]:        
-            # --- TODAY'S KPIs ---
-            with st.container(border=True):
-                with st.container(border=True):
-                    st.metric("Total Movements", f"{len(today_df):,}")
-                with st.container(horizontal=True):
-                    st.metric(":material/flight_takeoff: Takeoffs", f"{len(today_df[today_df['DIRECTION'] == 'TAKEOFF']):,}", border=True)
-                    st.metric(":material/flight_land: Landings", f"{len(today_df[today_df['DIRECTION'] == 'LANDING']):,}", border=True)
+            _render_operator_metrics(today_df)
             
-            # --- OPERATOR GRID ---
-            st.markdown("###### Operator Volume".upper())
-            # Sort operators by volume (descending)
-            op_counts = today_df['AIRLINE'].value_counts()
-            operators = op_counts[op_counts > 0].index.tolist()
-            
-            for i in range(0, len(operators), 2):
-                grid_cols = st.columns(2)
-                for j in range(2):
-                    if i + j < len(operators):
-                        op = operators[i + j]
-                        op_df = today_df[today_df['AIRLINE'] == op]
-                        with grid_cols[j]:
-                            with st.container(border=True):
-                                st.write(f"**{op}**")
-                                
-                                # Internal breakdown for the operator
-                                op_to = len(op_df[op_df['DIRECTION'] == 'TAKEOFF'])
-                                op_ld = len(op_df[op_df['DIRECTION'] == 'LANDING'])
-                                
-                                with st.container(horizontal=True, horizontal_alignment="right"):
-                                    st.metric("Total", f"{len(op_df):,}", border=True )
-                                with st.container(horizontal=True, horizontal_alignment="right"):
-                                    st.metric(":material/flight_takeoff: TAKEOFFS", f"{op_to:,}", border=True)
-                                    st.metric(":material/flight_land: LANDINGS", f"{op_ld:,}", border=True)
+                
         
         with t_cols[1]:
             # --- CHARTS ---
@@ -152,7 +148,19 @@ def generate_performance_visuals(df):
                     xaxis=dict(tickmode='linear', tick0=0, dtick=1),
                     legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None)
                 )
-                st.plotly_chart(fig_h, use_container_width=True)
+                st.plotly_chart(fig_h, width="stretch")
+
+            # --- SPECIES DISTRIBUTION ---
+            if 'SPECIES' in today_df.columns and not today_df['SPECIES'].dropna().empty:
+                with st.container(border=True):
+                    st.subheader("Movements by Aircraft Species")
+                    s_counts = today_df['SPECIES'].value_counts().reset_index()
+                    s_counts.columns = ['Species', 'Count']
+                    fig_s = px.pie(s_counts, values='Count', names='Species', 
+                                  hole=0.4, 
+                                  color_discrete_sequence=px.colors.qualitative.Safe)
+                    fig_s.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5))
+                    st.plotly_chart(fig_s, width="stretch")
 
                 # --- MINUTE DRILLDOWN ---
                 st.divider()
@@ -187,14 +195,15 @@ def generate_performance_visuals(df):
                                 range=[-0.5, 59.5]
                             ),
                             legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None),
-                            margin=dict(l=20, r=20, t=20, b=20),
-                            height=350
+                            margin=dict(l=5, r=5, t=5, b=5),
+                            bargap=0 # Small gap between bars in the same group
                         )
-                        st.plotly_chart(fig_min, use_container_width=True)
+                        fig_min.update_traces(width=0.5) # Force thin bars
+                        st.plotly_chart(fig_min, width="stretch")
                     else:
-                        st.info("No data available for the selected hour.")
+                        st.info(":material/info: No data available for the selected hour.")
                 else:
-                    st.info("Select an hour above to view the minute-by-minute distribution.")
+                    st.info(":material/lightbulb: Select an hour above to view the minute-by-minute distribution.")
 
                 # --- TODAY'S MOVEMENT LOG ---
                 st.divider()
@@ -218,24 +227,105 @@ def generate_performance_visuals(df):
                 if f_dir:
                     log_df = log_df[log_df['DIRECTION'].isin(f_dir)]
                 
-                st.dataframe(log_df, use_container_width=True, hide_index=True)
+                st.dataframe(log_df, width="stretch", hide_index=True)
 
     with tab_history:
         st.header("Historical Analysis")
         
-        # Monthly Trends
-        with st.container(border=True):
-            st.subheader("Monthly Volume Trends")
-            m_counts = df.groupby(['Month', 'DIRECTION'], observed=True).size().reset_index(name='Count')
-            # Sort chronologically
-            m_counts['Month_DT'] = pd.to_datetime(m_counts['Month'], format='%b %Y')
-            m_counts = m_counts.sort_values('Month_DT')
+        # --- GLOBAL FILTERS ---
+        f_cols = st.columns(2)
+        with f_cols[0]:
+            y_options = sorted(df['Year'].unique().tolist(), reverse=True)
+            selected_years = st.multiselect("Select Years", options=y_options, default=[])
+        with f_cols[1]:
+            # Sort months chronologically
+            m_names = ["January", "February", "March", "April", "May", "June", 
+                       "July", "August", "September", "October", "November", "December"]
+            available_months = [m for m in m_names if m in df['MonthName'].unique()]
+            selected_months = st.multiselect("Select Months", options=available_months, default=[])
+        
+        # Data filtering based on selection
+        hist_df = df.copy()
+        if selected_years:
+            hist_df = hist_df[hist_df['Year'].isin(selected_years)]
+        if selected_months:
+            hist_df = hist_df[hist_df['MonthName'].isin(selected_months)]
             
-            fig_m = px.bar(m_counts, x='Month', y='Count', color='DIRECTION', barmode='group', text='Count', height=400)
-            fig_m.update_traces(textposition='outside')
-            fig_m.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5, title=None))
-            st.plotly_chart(fig_m, use_container_width=True)
+        h_cols = st.columns([1, 2])
+        
+        with h_cols[0]:
+            # Use the filtered dataframe for metrics
+            _render_operator_metrics(hist_df)
+            
+        with h_cols[1]:
+            with st.container(height=1000, border=False):
+                # Yearly Volume Trends - Hide if months are selected
+                if not selected_months:
+                    with st.container(border=True):
+                        st.subheader("Yearly Volume Trends")
+                        y_counts = hist_df.groupby(['Year', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                        fig_y = px.bar(y_counts, x='Year', y='Count', color='DIRECTION', barmode='group', 
+                                      text='Count', 
+                                      color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'})
+                        fig_y.update_traces(textposition='outside')
+                        fig_y.update_layout(
+                            xaxis=dict(tickmode='linear'),
+                            legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None)
+                        )
+                        st.plotly_chart(fig_y, width="stretch")
+    
+                # Monthly Trends
+                with st.container(border=True):
+                    st.subheader("Monthly Volume Trends")
+                    m_counts = hist_df.groupby(['Month', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                    # Sort chronologically
+                    m_counts['Month_DT'] = pd.to_datetime(m_counts['Month'], format='%b %Y')
+                    m_counts = m_counts.sort_values('Month_DT')
+                    
+                    fig_m = px.bar(m_counts, x='Month', y='Count', color='DIRECTION', barmode='group', 
+                                  text='Count',
+                                  color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'})
+                    fig_m.update_traces(textposition='outside')
+                    fig_m.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None))
+                    st.plotly_chart(fig_m, width="stretch")
 
-        # Full Data Table
-        with st.expander("🔍 View Full Data Table"):
-            st.dataframe(df, use_container_width=True)
+                # --- SPECIES DISTRIBUTION (Historical) ---
+                if 'SPECIES' in hist_df.columns and not hist_df['SPECIES'].dropna().empty:
+                    with st.container(border=True):
+                        st.subheader("Historical Volume by Aircraft Species")
+                        hs_counts = hist_df['SPECIES'].value_counts().reset_index()
+                        hs_counts.columns = ['Species', 'Count']
+                        fig_hs = px.pie(hs_counts, values='Count', names='Species', 
+                                      hole=0.4, 
+                                      color_discrete_sequence=px.colors.qualitative.Safe)
+                        fig_hs.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5))
+                        st.plotly_chart(fig_hs, width="stretch")
+    
+                # Daily Volume Drilldown - Only show if exactly one month is selected
+                if len(selected_months) == 1:
+                    with st.container(border=True):
+                        st.subheader(f"Daily Volume Distribution: {selected_months[0]}")
+                        d_counts = hist_df.groupby(['Day', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                        
+                        # Sort days correctly
+                        d_counts = d_counts.sort_values('Day')
+                        
+                        fig_d = px.bar(d_counts, x='Day', y='Count', color='DIRECTION', barmode='group',
+                                      text='Count',
+                                      color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'},
+                                      labels={'Day': 'Date', 'Count': 'Movements'})
+                        fig_d.update_traces(textposition='outside')
+                        fig_d.update_layout(
+                            xaxis=dict(tickformat='%d %b'), # e.g., 25 Jan
+                            legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None)
+                        )
+                        st.plotly_chart(fig_d, width="stretch")
+                elif len(selected_months) > 1:
+                    st.info(":material/lightbulb: Select a **single month** to view the Daily Volume Distribution.")
+                elif not selected_months and not hist_df.empty:
+                    # Optional: show nothing or a generic message when no month selected
+                    pass
+        
+                # Full Data Table
+                with st.expander(":material/search: View Full Data Table"):
+                    st.dataframe(hist_df, use_container_width=True)
