@@ -1,29 +1,31 @@
 [server]
-enableStaticServing = true
-enableCORS = true
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+address = "0.0.0.0"
 
 
 # [[theme.fontFaces]]
-# family = "Space Grotesk"
-# url = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+# family = "Geist"
+# url = "https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100..900;1,100..900"
 # style = "normal"
 # weight = 400
 
 # [[theme.fontFaces]]
-# family = "Space Grotesk"
-# url = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+# family = "Geist"
+# url = "https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100..900;1,100..900"
 # style = "normal"
 # weight = 500
 
 # [[theme.fontFaces]]
-# family = "Space Grotesk"
-# url = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+# family = "Geist"
+# url = "https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100..900;1,100..900"
 # style = "normal"
 # weight = 600
 
 # [[theme.fontFaces]]
-# family = "Space Grotesk"
-# url = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+# family = "Geist"
+# url = "https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100..900;1,100..900"
 # style = "normal"
 # weight = 700
 
@@ -49,12 +51,13 @@ enableCORS = true
 [theme]
 
 # Base text
-font = "'Space Grotesk':https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+font = "'Geist':https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100..900;1,100..900"
 baseFontWeight = 400
-baseFontSize = 15
+baseFontSize = 14
+metricValueFontSize = 16
 
 # 🚀 MODERN STARTUP PALETTE 🚀
-primaryColor = "#8b5cf6"             # Purple-500 - modern, trendy, growth-focused
+primaryColor = "#1447E6"             # Purple-500 - modern, trendy, growth-focused
 backgroundColor = "#ffffff"          # Pure white - clean, modern foundation
 secondaryBackgroundColor = "#fafafa" # Neutral-50 - subtle modern gray
 textColor = "#18181b"                # Zinc-900 - high contrast, modern
@@ -62,8 +65,8 @@ linkColor = "#7c3aed"                # Purple-600 - slightly darker for links
 borderColor = "#e4e4e7"              # Zinc-200 - clean, modern borders
 showWidgetBorder = true
 baseRadius = "0.5rem"                # Generous rounding - modern, friendly
-#font = "Space Grotesk"               # DM Sans - modern startup-style typography
-headingFont = "Space Grotesk"   # Consistent hierarchy
+#font = "Geist"               # DM Sans - modern startup-style typography
+headingFont = "Geist"           # Consistent hierarchy
 codeFont = "JetBrainsMono"      # Fira Code - popular developer monospace
 codeBackgroundColor = "#f4f4f5" # Zinc-100 - subtle code background
 showSidebarBorder = true

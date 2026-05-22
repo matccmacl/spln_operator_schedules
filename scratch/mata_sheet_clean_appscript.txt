@@ -1,0 +1,158 @@
+function formatDate(dateString) {
+  // Check if the date string is in the JavaScript date format
+  if (isNaN(Date.parse(dateString)) === false) {
+    const dateObj = new Date(dateString);
+    const month = dateObj.getMonth() + 1;
+    const day = dateObj.getDate();
+    const year = dateObj.getFullYear();
+
+    return `${day}/${month}/${year}`;
+  }
+
+  // If not in the JavaScript date format, assume it's in "dd.mm.yyyy" format
+  const [day, month, year] = dateString.split(".");
+  return `${day}/${month}/${year}`;
+}
+
+
+function formatTime(dateString) {
+  const dateObj = new Date(dateString);
+  const hours = String(dateObj.getHours()).padStart(2, "0");
+  const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function mantaDataClean(fileid) {
+
+  
+  //let mantaTestFileId = '1rtNjKCdYSdabayNnLAPUDvtjw6lZaVgOy7gHOqm7c00'
+  let mantaTestFile = DriveApp.getFileById(fileid)
+  let dataEntrySheet = SpreadsheetApp.openById(dataEntrySS_ID).getSheetByName('manta');
+
+  let maldivesTimeZone = 'Indian/Kerguelen'
+  
+  
+  let spreadsheet = SpreadsheetApp.open(mantaTestFile);
+  spreadsheet.setSpreadsheetTimeZone(maldivesTimeZone);
+  let sheetOriginal = spreadsheet.getSheetByName('flights');
+  let sheetCleaned = spreadsheet.getSheetByName('cleaned');
+  let dataOriginal = sheetOriginal.getDataRange().getValues();
+  let arrDataOriginal = sheetOriginal.getDataRange().getValues();
+
+  //let headerRow = sheetOriginal.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+  let mantaDepartures = [];
+
+  let depColumn = 4;
+  let valueToCheck = 'MLE';
+
+  let columnsToRemove = 3;
+  let columnToRemove2 = 5;
+  let columnToRemove3 = 6;
+
+  for (let i = 0; i < dataOriginal.length; i++) {
+    let row = dataOriginal[i];
+    let valueInColumn = row[depColumn];
+
+    if (valueInColumn === valueToCheck) {
+      mantaDepartures.push(row);
+    }
+  }
+
+  
+
+  for (let i = 0; i < mantaDepartures.length; i++) {
+
+    let row = mantaDepartures[i];
+    row.splice(columnsToRemove, 1);
+    row.splice(columnToRemove2, 1);
+    row.splice(columnToRemove3, 1);
+
+    let outBoundResort = mantaDepartures[i][5].toString();
+    //console.log(outBoundResort);
+    if (outBoundResort.includes('VR')) {
+      var threeLetterResort = outBoundResort.replace(/VR/g, '');
+      mantaDepartures[i][5] = threeLetterResort;
+    }
+
+    let dateValue = mantaDepartures[i][0];
+    mantaDepartures[i][0] = formatDate(dateValue);
+
+    let timeValue = mantaDepartures[i][4];
+    mantaDepartures[i][4] = formatTime(timeValue);
+
+    // Create the new date-time string after formatting date and time
+    let mdateTimei = `${mantaDepartures[i][0]} ${mantaDepartures[i][4]}`;
+
+    // Place the new date-time string at the end of each row
+
+    mantaDepartures[i].unshift(mdateTimei);
+    let stastdCol = mantaDepartures[i].splice(5, 1)[0];
+    mantaDepartures[i].push(stastdCol);
+
+    let movement = 'TAKEOFF';
+    let flightRule = 'VFR'
+    let operator = 'MANTA AIR'
+    mantaDepartures[i].push(movement, flightRule, operator);
+
+  }
+
+  
+  //MANTA ARRIVALS
+
+
+  let mantaArrivals = [];
+  let arrColumn = 7;
+  let stdColumnNo = 4;
+  let valueToCheck2 = 'MLE'
+
+
+
+  for (let i = 0; i < arrDataOriginal.length; i++) {
+    let row = arrDataOriginal[i];
+    let valueInColumn = row[arrColumn];
+    //console.log(valueInColumn);
+
+    if (valueInColumn === valueToCheck2) {
+      mantaArrivals.push(row);
+
+      //console.log(row);
+    }
+  }
+
+  
+
+  for (let i = 0; i < mantaArrivals.length; i++) {
+
+    let row = mantaArrivals[i];
+
+    row.splice(columnsToRemove, 1);
+    row.splice(columnToRemove2, 1);
+    row.splice(stdColumnNo, 1);
+
+
+    let inBoundResort = mantaArrivals[i][3].toString();
+    //console.log(outBoundResort);
+    if (inBoundResort.includes('VR')) {
+      var threeLetterResort = inBoundResort.replace(/VR/g, '');
+      mantaArrivals[i][3] = threeLetterResort;
+    }
+
+    let dateValue = mantaArrivals[i][0];
+    mantaArrivals[i][0] = formatDate(dateValue);
+
+    let timeValue = mantaArrivals[i][5];
+    mantaArrivals[i][5] = formatTime(timeValue);
+
+    let mdateTimei = `${mantaArrivals[i][0]} ${mantaArrivals[i][5]}`;
+
+    mantaArrivals[i].unshift(mdateTimei);
+
+    let movement = 'LANDING';
+    let flightRule = 'VFR'
+    let operator = 'MANTA AIR'
+
+    mantaArrivals[i].push(movement, flightRule, operator);
+
+
+  }

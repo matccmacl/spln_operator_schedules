@@ -1,0 +1,67 @@
+/**
+ * Optimized cleaning function that returns data instead of writing it immediately.
+ */
+function tmaDataClean(tmaFileID) {
+  const maldivesTimeZone = 'Indian/Kerguelen';
+  const tmaSS = SpreadsheetApp.openById(tmaFileID);
+  tmaSS.setSpreadsheetTimeZone(maldivesTimeZone);
+  const dataSheet = tmaSS.getActiveSheet();
+
+  // Process Departures (A3:F) and Landings (H3:M)
+  const depData = processTmaSection(dataSheet.getRange('A3:F').getValues(), 'TAKEOFF');
+  const arrData = processTmaSection(dataSheet.getRange('H3:M').getValues(), 'LANDING');
+
+  return [...depData, ...arrData];
+}
+
+/**
+ * Transforms raw TMA data into the specific 10-column structure.
+ * @param {Array[]} values - Raw data from columns A:F (Departures) or H:M (Landings).
+ * @param {string} movementType - 'TAKEOFF' or 'LANDING'.
+ * @return {Array[]} Corrected 2D array for the master sheet.
+ */
+function processTmaSection(values, movementType) {
+  return values
+    .filter(row => row[0] !== "" && row[1] !== "") // Filter out empty rows
+    .map(row => {
+      // 1. Extract values from the raw row (Source: A3:F or H3:M)
+      const rawDate     = row[0]; // Date
+      const rawReg      = row[1]; // Registration
+      const rawFlightNo   = row[2]; // From / flt no rawFlightNo
+      const rawOrigin     = row[3]; // To / from / rawOrigin
+      const rawDest  = row[4]; // Flight Number /to / rawDest
+      const rawTime     = row[5]; // Time (STD/STA)
+
+      // 2. Apply cleaning operations
+      const cleanDate = formatDate(rawDate);//[cite: 1]
+      const cleanTime = formatTimeHHMM(rawTime);//[cite: 1]
+      const cleanReg  = '8Q-' + rawReg;//[cite: 1]
+      const dateTimeStr = `${cleanDate} ${cleanTime}`; // For the DATE-TIME column
+
+      // 3. Construct the array based on your specified column order:
+      // [DATE-TIME, DATE, FLT NO, CALL SIGN, FROM, TO, STD/STA, MOVEMENT, FLIGHT RULE, AIRLINE]
+      return [
+        dateTimeStr,   // DATE-TIME
+        cleanDate,     // DATE
+        rawFlightNo,   // FLT NO
+        cleanReg,      // CALL SIGN (8Q- prefix)
+        rawOrigin,     // FROM
+        rawDest,       // TO
+        cleanTime,     // STD/STA
+        movementType,  // MOVEMENT (TAKEOFF/LANDING)
+        'VFR',         // FLIGHT RULE
+        'TMA'          // AIRLINE
+      ];
+    });
+}
+
+function formatTimeHHMM(timeString) {
+  if (!timeString || typeof timeString !== 'string') return "00:00";
+  const [hours, mins] = timeString.split(':');
+  const dateObj = new Date();
+  dateObj.setUTCHours(parseInt(hours) - 5, parseInt(mins), 0, 0); 
+
+  const utcHours = String(dateObj.getUTCHours()).padStart(2, "0");
+  const utcMinutes = String(dateObj.getUTCMinutes()).padStart(2, "0");
+  return `${utcHours}:${utcMinutes}`;
+}

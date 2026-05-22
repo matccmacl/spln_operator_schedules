@@ -26,9 +26,9 @@ def process_file(file, filename):
         else:
             return None, f"Unsupported format for Maldivian: {filename}"
     elif "TMA" in filename_upper:
-        return None, "TMA Processor pending implementation."
+        return _process_tma_excel(file, filename)
     elif "MANTA" in filename_upper:
-        return None, "Manta Air Processor pending implementation."
+        return _process_manta_excel(file, filename)
     else:
         return None, f"Unknown operator for file: {filename}"
 
@@ -97,50 +97,59 @@ def _process_maldivian_pdf(file, filename):
 def _process_villa_air(file, filename):
     """
     Processes Villa Air PDF schedules using Camelot (stream flavor).
+
+    Stream table layout (8 columns, 0-indexed):
+        0: Row No.  1: TYPE (DHC6)  2: REG  3: FLT NUMBER
+        4: FROM     5: TO           6: STD  7: STA
+    Data rows are identified by col[1] == 'DHC6'.
+    VRMM = Male seaplane terminal (takeoff/landing filter).
+    Times are Local; UTC = Local - 5h.
     """
     try:
-        # Extract date from filename: e.g., "villa_air_DHC6 SCHEDULE 09-02-2026.pdf"
+        # Filename format: "...DD-MM-YYYY.pdf"
         date_pattern = r"([0-9]{2}-[0-9]{2}-[0-9]{4})"
         match = re.search(date_pattern, filename)
         if not match:
             return None, "Could not extract date from Villa Air filename."
-        
-        date_object = pd.to_datetime(match.group(1))
 
-        tables = camelot.read_pdf(file, pages='all', flavor='stream')
+        date_object = pd.to_datetime(match.group(1), dayfirst=True)
+
+        tables = camelot.read_pdf(file, pages='all', flavor='lattice')
         all_processed_tables = []
 
         for table in tables:
-            # Filter rows where column 3 is '0' or empty and drop specific header/junk rows
             df = table.df.copy()
-            df = df[(df[3] != '0') & (df[3] != '')]
-            
-            # Specific slices for Villa format
-            if df.shape[1] >= 9:
-                df = df.drop(index=[2, 4], errors='ignore').iloc[:, [2, 3, 4, 5, 6, 7, 8]]
-                df.columns = ["FLT NUMBER", "REG", "FROM", "TO", "STD", "STA", "REMARKS"]
-                df["DATE"] = date_object
-                all_processed_tables.append(df)
+            # Keep only genuine flight rows: TYPE column (col 1) == 'DHC6'
+            df = df[df[1] == 'DHC6']
+            if df.empty:
+                continue
+            df = df.iloc[:, [2, 3, 4, 5, 6, 7]]
+            df.columns = ["REG", "FLT NUMBER", "FROM", "TO", "STD", "STA"]
+            df["DATE"] = date_object
+            all_processed_tables.append(df)
 
         if not all_processed_tables:
             return None, "No valid Villa Air data found."
 
         combined_df = pd.concat(all_processed_tables, ignore_index=True)
-        
-        # Normalize times
+
+        # Normalize times - format is "H:MM" or "HH:MM"
         for col in ["STD", "STA"]:
-            combined_df[col] = pd.to_datetime(combined_df[col], errors="coerce").dt.strftime("%H:%M")
+            combined_df[col] = pd.to_datetime(combined_df[col], format="%H:%M", errors="coerce").dt.strftime("%H:%M")
 
         # Split into Takeoffs and Landings
-        takeoff_df = combined_df[combined_df["FROM"] == "MLE"].copy()
+        takeoff_df = combined_df[combined_df["FROM"] == "VRMM"].copy()
         takeoff_df["DIRECTION"] = "TAKEOFF"
         takeoff_df.rename(columns={"STD": "TIME"}, inplace=True)
 
-        landing_df = combined_df[combined_df["TO"] == "MLE"].copy()
+        landing_df = combined_df[combined_df["TO"] == "VRMM"].copy()
         landing_df["DIRECTION"] = "LANDING"
         landing_df.rename(columns={"STA": "TIME"}, inplace=True)
 
         final_df = pd.concat([takeoff_df, landing_df], ignore_index=True)
+        if final_df.empty:
+            return None, "No VRMM movements found in Villa Air file."
+
         final_df["DATE TIME LOCAL"] = pd.to_datetime(final_df["DATE"].dt.strftime("%Y-%m-%d") + " " + final_df["TIME"])
         final_df["DATE TIME UTC"] = final_df["DATE TIME LOCAL"] - pd.Timedelta(hours=5)
         final_df["AIRLINE"] = "VILLA AIR"
@@ -245,3 +254,150 @@ def _process_maldivian_excel(file, filename):
     except Exception as e:
         return None, f"Maldivian Excel error: {e}"
 
+
+def _process_tma_excel(file, filename):
+    """
+    Processes TMA Excel schedules.
+    Layout: rows 0-1 are headers; data starts at row 2.
+      Outbound (TAKEOFF): cols 0-5  -> Date, Tail No., Flight No, Dep. Airport, Arr. Airport, STD
+      Inbound  (LANDING): cols 7-12 -> Date, Tail No., Flight No, Dep. Airport, Arr. Airport, STA
+    Tail numbers are stored as 3-char suffixes and need the '8Q-' prefix.
+    """
+    try:
+        raw = pd.read_excel(file, header=None)
+
+        def _extract_section(df_cols, direction, time_col_label):
+            """Slice one side of the sheet, clean, and tag direction."""
+            section = df_cols.iloc[2:].copy()  # skip two header rows
+            section.columns = ["DATE", "TAIL", "FLT NUMBER", "FROM", "TO", time_col_label]
+
+            # Drop rows where both DATE and TAIL are missing
+            section = section.dropna(subset=["DATE", "TAIL"])
+            section = section[section["TAIL"].astype(str).str.strip() != ""]
+
+            # REG: prepend '8Q-' to the 3-char tail suffix
+            section["REG"] = "8Q-" + section["TAIL"].astype(str).str.strip()
+
+            # DATE: Excel reads it as a datetime; extract just the date part
+            section["DATE"] = pd.to_datetime(section["DATE"]).dt.normalize()
+
+            # TIME: cells come in as timedelta (HH:MM:SS) or datetime; normalise to HH:MM string
+            def _to_hhmm(val):
+                if pd.isna(val):
+                    return "00:00"
+                if isinstance(val, pd.Timedelta):
+                    total_seconds = int(val.total_seconds())
+                elif hasattr(val, 'hour'):  # datetime.time or datetime
+                    total_seconds = val.hour * 3600 + val.minute * 60
+                else:
+                    try:
+                        t = pd.to_datetime(str(val))
+                        total_seconds = t.hour * 3600 + t.minute * 60
+                    except Exception:
+                        return "00:00"
+                h, m = divmod(total_seconds // 60, 60)
+                return f"{h:02d}:{m:02d}"
+
+            section["TIME"] = section[time_col_label].apply(_to_hhmm)
+            section["DIRECTION"] = direction
+
+            return section[["DATE", "REG", "FLT NUMBER", "FROM", "TO", "TIME", "DIRECTION"]]
+
+        dep = _extract_section(raw.iloc[:, 0:6],  "TAKEOFF", "STD")
+        arr = _extract_section(raw.iloc[:, 7:13], "LANDING", "STA")
+
+        combined = pd.concat([dep, arr], ignore_index=True)
+        if combined.empty:
+            return None, "No data rows found in TMA file."
+
+        combined["AIRLINE"] = "TMA"
+        combined["DATE TIME LOCAL"] = pd.to_datetime(
+            combined["DATE"].dt.strftime("%Y-%m-%d") + " " + combined["TIME"]
+        )
+        combined["DATE TIME UTC"] = combined["DATE TIME LOCAL"] - pd.Timedelta(hours=5)
+
+        cols = ["DATE TIME UTC", "DATE TIME LOCAL", "AIRLINE", "FLT NUMBER", "REG", "FROM", "TO", "DIRECTION"]
+        return combined[cols], None
+
+    except Exception as e:
+        return None, f"TMA Excel error: {e}"
+
+
+def _process_manta_excel(file, filename):
+    """
+    Processes MANTA Air Excel flight schedules.
+
+    Expected sheet: 'flights'
+    Columns (0-indexed):
+        0: Date ADEP [Plan][LT]   (datetime — date portion used)
+        1: Flight number
+        2: Aircraft               (registration e.g. '8Q-RAG')
+        3: ADEP name [Plan]       (ignored)
+        4: ADEP preferred code    (e.g. 'MLE', 'VRNOQ')
+        5: STD [UTC]              (datetime.time)
+        6: ADES name [Plan]       (ignored)
+        7: ADES preferred code    (e.g. 'MLE', 'VRAUR')
+        8: STA [UTC]              (datetime.time)
+
+    Takeoffs : rows where col 4 == 'MLE'; time = STD (col 5)
+    Landings : rows where col 7 == 'MLE'; time = STA (col 8)
+    TRNG flights are excluded.
+    Times are already UTC; LOCAL = UTC + 5 h.
+    """
+    try:
+        # --- Date from filename: _MANTA_YYYY-MM-DD_ ---
+        date_match = re.search(r"(\d{4}-\d{2}-\d{2})", filename)
+        if date_match:
+            schedule_date = pd.to_datetime(date_match.group(1)).date()
+        else:
+            schedule_date = pd.Timestamp.today().date()
+
+        df = pd.read_excel(file, sheet_name="flights", header=None)
+        # Row 0 is the header; data starts at row 1
+        df = df.iloc[1:].copy()
+        df.columns = ["DATE", "FLT NUMBER", "REG",
+                      "ADEP_NAME", "FROM", "STD",
+                      "ADES_NAME", "TO", "STA"]
+
+        def _strip_vr(code):
+            """'VRNOQ' -> 'NOQ', 'MLE' -> 'MLE'"""
+            s = str(code).strip()
+            return s[2:] if s.upper().startswith("VR") else s
+
+        def _time_to_str(t):
+            """datetime.time -> 'HH:MM'"""
+            try:
+                return f"{t.hour:02d}:{t.minute:02d}"
+            except AttributeError:
+                try:
+                    parsed = pd.to_datetime(str(t))
+                    return parsed.strftime("%H:%M")
+                except Exception:
+                    return "00:00"
+
+        # --- TAKEOFFS: FROM == 'MLE' ---
+        dep = df[df["FROM"] == "MLE"].copy()
+        dep["DIRECTION"] = "TAKEOFF"
+        dep["TIME_UTC"] = dep["STD"].apply(_time_to_str)
+        dep["TO"] = dep["TO"].apply(_strip_vr)
+
+        # --- LANDINGS: TO == 'MLE' ---
+        arr = df[df["TO"] == "MLE"].copy()
+        arr["DIRECTION"] = "LANDING"
+        arr["TIME_UTC"] = arr["STA"].apply(_time_to_str)
+        arr["FROM"] = arr["FROM"].apply(_strip_vr)
+
+        combined = pd.concat([dep, arr], ignore_index=True)
+        if combined.empty:
+            return None, "No MLE movements found in MANTA file."
+
+        combined["AIRLINE"] = "MANTA AIR"
+        date_str = str(schedule_date)
+        combined["DATE TIME UTC"] = pd.to_datetime(date_str + " " + combined["TIME_UTC"])
+        combined["DATE TIME LOCAL"] = combined["DATE TIME UTC"] + pd.Timedelta(hours=5)
+
+        cols = ["DATE TIME UTC", "DATE TIME LOCAL", "AIRLINE", "FLT NUMBER", "REG", "FROM", "TO", "DIRECTION"]
+        return combined[cols], None
+
+    except Exception as e:
+        return None, f"MANTA Air Excel error: {e}"

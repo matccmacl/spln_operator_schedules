@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 import io
 import time
-import os
 
 # Internal Imports
 import database
@@ -42,7 +41,7 @@ with st.sidebar:
         st.rerun()
         
     st.divider()
-    with st.expander("🛠️ Developer Tools"):
+    with st.expander(":material/build: Developer Tools"):
         # Display DB Size
         db_size = database.get_db_size()
         st.write(f":material/database: **DB Size:** `{db_size}`")
@@ -56,26 +55,40 @@ with st.sidebar:
         st.divider()
         st.write("Inspect Database")
         
-        @st.dialog("Database Viewer", width="large")
-        def view_db_table(table_name):
-            st.write(f"### Table: {table_name}")
-            if table_name == "movements":
+        @st.dialog("Inspect Database", width="large")
+        def inspect_database():
+            tab_mvmt, tab_reg, tab_files = st.tabs([
+                ":material/flight: Movements",
+                ":material/directions_boat: Registrations",
+                ":material/folder: Processed Files",
+            ])
+
+            with tab_mvmt:
                 df = database.get_all_movements()
-            elif table_name == "registrations":
+                if df.empty:
+                    st.info("Table is empty.")
+                else:
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+            with tab_reg:
                 df = database.get_all_registrations()
-            else:
+                if df.empty:
+                    st.info("Table is empty.")
+                else:
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+            with tab_files:
                 files_df = database.get_all_filenames()
-                # ... existing file management logic ...
                 if files_df.empty:
                     st.info("No processed files found.")
                 else:
                     search = st.text_input(":material/search: Search Files", placeholder="Enter filename...")
                     if search:
                         files_df = files_df[files_df['filename'].str.contains(search, case=False)]
-                    
+
                     if 'Select' not in files_df.columns:
                         files_df.insert(0, "Select", False)
-                    
+
                     edited_df = st.data_editor(
                         files_df,
                         hide_index=True,
@@ -83,13 +96,13 @@ with st.sidebar:
                             "Select": st.column_config.CheckboxColumn(default=False),
                             "filename": st.column_config.TextColumn("Filename", width="large"),
                             "timestamp": st.column_config.TextColumn("Processed At", width="medium"),
-                            "id": None 
+                            "id": None,
                         },
                         disabled=["filename", "timestamp"],
-                        width="stretch",
+                        use_container_width=True,
                         key="file_editor"
                     )
-                    
+
                     selected_files = edited_df[edited_df["Select"] == True]["filename"].tolist()
                     if selected_files:
                         st.divider()
@@ -101,44 +114,10 @@ with st.sidebar:
                             time.sleep(1)
                             st.rerun()
 
-            if table_name in ["movements", "registrations"] and not df.empty:
-                st.dataframe(df, width="stretch")
-            elif table_name in ["movements", "registrations"] and df.empty:
-                st.info("Table is empty.")
-
-            if st.button("Close"):
-                st.rerun()
-
-        if st.button("View Movements", width="stretch"):
-            view_db_table("movements")
-        if st.button("View Registrations", width="stretch"):
-            view_db_table("registrations")
-        if st.button("View Processed Files", width="stretch"):
-            view_db_table("processed_files")
+        if st.button(":material/database: Inspect Database", use_container_width=True):
+            inspect_database()
             
-        st.divider()
-        st.write("##### Bulk Data Operations")
-        if st.button("Seed Registrations from CSV", width="stretch"):
-            success, msg = database.seed_registrations()
-            if success:
-                st.success(msg)
-            else:
-                st.error(msg)
-        
-        # Dynamic Bulk Ingestion for multiple files
-        bulk_files = [f for f in os.listdir("scratch") if f.startswith("clnd_schdls_") and f.endswith(".csv")]
-        
-        for b_file in sorted(bulk_files):
-            if st.button(f"Ingest: {b_file}", width="stretch"):
-                bulk_path = os.path.join("scratch", b_file)
-                with st.spinner(f"Ingesting {b_file}..."):
-                    success, msg = database.ingest_bulk_csv(bulk_path)
-                if success:
-                    st.success(msg)
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error(msg)
+
 
     st.info("Seaplane Ops v1.2 (SQLite-only)")
 
@@ -220,7 +199,14 @@ if st.session_state['page'] == "File Ingestion":
         # --- STEP 2: PREVIEW & CONFIRMATION ---
         else:
             df_processed = st.session_state['df_extracted']
-            
+
+            # 0. Extraction summary
+            airline_name = df_processed['AIRLINE'].iloc[0] if not df_processed.empty else "Unknown"
+            row_count = len(df_processed)
+            c_a, c_r = st.columns(2)
+            c_a.metric(":material/airlines: Airline Detected", airline_name)
+            c_r.metric(":material/table_rows: Movements Processed", row_count)
+
             # 1. Date Verification
             st.markdown("### :material/calendar_month: Step 2: Verify Schedule Date")
             current_date = df_processed['DATE TIME LOCAL'].iloc[0].date() if not df_processed.empty else datetime.now().date()

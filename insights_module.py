@@ -2,7 +2,24 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import database # Local SQLite module
+
+# ---------------------------------------------------------------------------
+# CHART COLOR PALETTE
+# ---------------------------------------------------------------------------
+C_TAKEOFF    = '#155DFC'
+C_LANDING    = '#8EC5FF'
+C_DONUT_1    = '#1447E6'   # Direction donut – primary segment
+C_DONUT_2    = '#2B7FFF'   # Direction donut – secondary segment
+C_BAR        = '#1447E6'   # Single-color bar charts (direction toggle off)
+C_AIRLINE_1  = '#1447E6'
+C_AIRLINE_2  = '#155DFC'
+C_AIRLINE_3  = '#2B7FFF'
+C_AIRLINE_4  = '#8EC5FF'
+
+DIR_COLOR_MAP     = {'TAKEOFF': C_TAKEOFF, 'LANDING': C_LANDING}
+AIRLINE_PALETTE   = [C_AIRLINE_1, C_AIRLINE_2, C_AIRLINE_3, C_AIRLINE_4]
 
 @st.cache_data(ttl=60, show_spinner="Syncing with Local Database...")
 def load_master_data():
@@ -62,32 +79,39 @@ def _render_operator_metrics(data_df):
         with st.container(horizontal=True):
             st.metric(":material/flight_takeoff: Takeoffs", f"{len(data_df[data_df['DIRECTION'] == 'TAKEOFF']):,}", border=True)
             st.metric(":material/flight_land: Landings", f"{len(data_df[data_df['DIRECTION'] == 'LANDING']):,}", border=True)
-    
+
     # --- OPERATOR GRID ---
+    st.markdown(
+    """
+    <style>
+    [data-testid="stMetricValue"] {
+        font-size: 24px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+    )
     st.markdown("###### Operator Volume".upper())
-    # Sort operators by volume (descending)
     op_counts = data_df['AIRLINE'].value_counts()
     operators = op_counts[op_counts > 0].index.tolist()
-    
+
     for i in range(0, len(operators), 2):
         grid_cols = st.columns(2)
         for j in range(2):
             if i + j < len(operators):
                 op = operators[i + j]
                 op_df = data_df[data_df['AIRLINE'] == op]
+                op_to = len(op_df[op_df['DIRECTION'] == 'TAKEOFF'])
+                op_ld = len(op_df[op_df['DIRECTION'] == 'LANDING'])
                 with grid_cols[j]:
                     with st.container(border=True):
                         st.write(f"**{op}**")
-                        
-                        # Internal breakdown for the operator
-                        op_to = len(op_df[op_df['DIRECTION'] == 'TAKEOFF'])
-                        op_ld = len(op_df[op_df['DIRECTION'] == 'LANDING'])
-                        
                         with st.container(horizontal=True, horizontal_alignment="right"):
-                            st.metric("Total", f"{len(op_df):,}", border=True )
+                            st.metric("Total", f"{len(op_df):,}", border=True)
                         with st.container(horizontal=True, horizontal_alignment="right"):
-                            st.metric(":material/flight_takeoff: TAKEOFFS", f"{op_to:,}", border=True)
-                            st.metric(":material/flight_land: LANDINGS", f"{op_ld:,}", border=True)
+                            st.metric(":material/flight_takeoff: Takeoffs", f"{op_to:,}", border=True)
+                            st.metric(":material/flight_land: Landings", f"{op_ld:,}", border=True)
+
 
 def generate_performance_visuals(df):
     """
@@ -135,14 +159,50 @@ def generate_performance_visuals(df):
                 
         
         with t_cols[1]:
+            # --- DONUT CHARTS ---
+            donut_cols = st.columns(2)
+            with donut_cols[0]:
+                with st.container(border=True):
+                    st.subheader("By Direction")
+                    dir_counts = today_df.groupby('DIRECTION', observed=True).size().reset_index(name='Count')
+                    fig_dir = px.pie(dir_counts, values='Count', names='DIRECTION', hole=0.55,
+                                     color='DIRECTION',
+                                     color_discrete_map={'TAKEOFF': C_DONUT_1, 'LANDING': C_DONUT_2})
+                    fig_dir.update_layout(
+                        margin=dict(t=10, b=10, l=10, r=10),
+                        legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5, title=None)
+                    )
+                    st.plotly_chart(fig_dir, width="stretch")
+            with donut_cols[1]:
+                with st.container(border=True):
+                    st.subheader("By Airline")
+                    al_counts = today_df.groupby('AIRLINE', observed=True).size().reset_index(name='Count')
+                    fig_al = px.pie(al_counts, values='Count', names='AIRLINE', hole=0.55,
+                                    color_discrete_sequence=AIRLINE_PALETTE)
+                    fig_al.update_layout(
+                        margin=dict(t=10, b=10, l=10, r=10),
+                        legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5, title=None)
+                    )
+                    st.plotly_chart(fig_al, width="stretch")
+
             # --- CHARTS ---
             with st.container(border=True):
-                st.subheader("Movements by Hour (UTC)")
-                h_counts = today_df.groupby(['Hour', 'DIRECTION'], observed=True).size().reset_index(name='Count')
-                fig_h = px.bar(h_counts, x='Hour', y='Count', color='DIRECTION', barmode='group',
-                            text='Count',
-                            color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'},
-                            labels={'Hour': 'Hour (UTC)', 'Count': 'Movements'})
+                _hc1, _hc2 = st.columns([4, 1])
+                with _hc1:
+                    st.subheader("Movements by Hour (UTC)")
+                with _hc2:
+                    h_by_dir = st.toggle("By Direction", key="tog_hourly")
+                if h_by_dir:
+                    h_counts = today_df.groupby(['Hour', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                    fig_h = px.bar(h_counts, x='Hour', y='Count', color='DIRECTION', barmode='group',
+                                text='Count',
+                                color_discrete_map=DIR_COLOR_MAP,
+                                labels={'Hour': 'Hour (UTC)', 'Count': 'Movements'})
+                else:
+                    h_counts = today_df.groupby('Hour', observed=True).size().reset_index(name='Count')
+                    fig_h = px.bar(h_counts, x='Hour', y='Count', text='Count',
+                                color_discrete_sequence=[C_BAR],
+                                labels={'Hour': 'Hour (UTC)', 'Count': 'Movements'})
                 fig_h.update_traces(textposition='outside')
                 fig_h.update_layout(
                     xaxis=dict(tickmode='linear', tick0=0, dtick=1),
@@ -151,16 +211,7 @@ def generate_performance_visuals(df):
                 st.plotly_chart(fig_h, width="stretch")
 
             # --- SPECIES DISTRIBUTION ---
-            if 'SPECIES' in today_df.columns and not today_df['SPECIES'].dropna().empty:
-                with st.container(border=True):
-                    st.subheader("Movements by Aircraft Species")
-                    s_counts = today_df['SPECIES'].value_counts().reset_index()
-                    s_counts.columns = ['Species', 'Count']
-                    fig_s = px.pie(s_counts, values='Count', names='Species', 
-                                  hole=0.4, 
-                                  color_discrete_sequence=px.colors.qualitative.Safe)
-                    fig_s.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5))
-                    st.plotly_chart(fig_s, width="stretch")
+            
 
                 # --- MINUTE DRILLDOWN ---
                 st.divider()
@@ -183,7 +234,7 @@ def generate_performance_visuals(df):
                         m_counts = min_df.groupby(['Minute', 'DIRECTION'], observed=True).size().reset_index(name='Count')
                         fig_min = px.bar(m_counts, x='Minute', y='Count', color='DIRECTION', barmode='group',
                                        text='Count',
-                                       color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'},
+                                       color_discrete_map=DIR_COLOR_MAP,
                                        labels={'Minute': 'Minute', 'Count': 'Movements'})
                         fig_min.update_traces(textposition='outside')
                         # Force x-axis to show 0-59
@@ -250,23 +301,48 @@ def generate_performance_visuals(df):
             hist_df = hist_df[hist_df['Year'].isin(selected_years)]
         if selected_months:
             hist_df = hist_df[hist_df['MonthName'].isin(selected_months)]
-            
+
+        # --- Day picker (single-month only) — hoisted so display_df is available everywhere ---
+        display_df = hist_df
+        if len(selected_months) == 1:
+            available_days = sorted(hist_df['Day'].dropna().unique())
+            if available_days:
+                min_day = pd.Timestamp(available_days[0]).date()
+                max_day = pd.Timestamp(available_days[-1]).date()
+                selected_day = st.date_input(
+                    ":material/schedule: Select a day for hourly drilldown (and to filter metrics & table):",
+                    value=min_day,
+                    min_value=min_day,
+                    max_value=max_day,
+                    key="sel_hourly_day"
+                )
+                display_df = hist_df[hist_df['Day'].apply(lambda d: pd.Timestamp(d).date()) == selected_day].copy()
+
         h_cols = st.columns([1, 2])
-        
+
         with h_cols[0]:
-            # Use the filtered dataframe for metrics
-            _render_operator_metrics(hist_df)
+            # Use display_df so metrics react to day selection
+            _render_operator_metrics(display_df)
             
         with h_cols[1]:
             with st.container(height=1000, border=False):
                 # Yearly Volume Trends - Hide if months are selected
                 if not selected_months:
                     with st.container(border=True):
-                        st.subheader("Yearly Volume Trends")
-                        y_counts = hist_df.groupby(['Year', 'DIRECTION'], observed=True).size().reset_index(name='Count')
-                        fig_y = px.bar(y_counts, x='Year', y='Count', color='DIRECTION', barmode='group', 
-                                      text='Count', 
-                                      color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'})
+                        _yc1, _yc2 = st.columns([4, 1])
+                        with _yc1:
+                            st.subheader("Yearly Volume Trends")
+                        with _yc2:
+                            y_by_dir = st.toggle("By Direction", key="tog_yearly")
+                        if y_by_dir:
+                            y_counts = hist_df.groupby(['Year', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                            fig_y = px.bar(y_counts, x='Year', y='Count', color='DIRECTION', barmode='group',
+                                          text='Count',
+                                          color_discrete_map=DIR_COLOR_MAP)
+                        else:
+                            y_counts = hist_df.groupby('Year', observed=True).size().reset_index(name='Count')
+                            fig_y = px.bar(y_counts, x='Year', y='Count', text='Count',
+                                          color_discrete_sequence=[C_BAR])
                         fig_y.update_traces(textposition='outside')
                         fig_y.update_layout(
                             xaxis=dict(tickmode='linear'),
@@ -276,56 +352,119 @@ def generate_performance_visuals(df):
     
                 # Monthly Trends
                 with st.container(border=True):
-                    st.subheader("Monthly Volume Trends")
-                    m_counts = hist_df.groupby(['Month', 'DIRECTION'], observed=True).size().reset_index(name='Count')
-                    # Sort chronologically
-                    m_counts['Month_DT'] = pd.to_datetime(m_counts['Month'], format='%b %Y')
-                    m_counts = m_counts.sort_values('Month_DT')
-                    
-                    fig_m = px.bar(m_counts, x='Month', y='Count', color='DIRECTION', barmode='group', 
-                                  text='Count',
-                                  color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'})
+                    _mc1, _mc2 = st.columns([4, 1])
+                    with _mc1:
+                        st.subheader("Monthly Volume Trends")
+                    with _mc2:
+                        m_by_dir = st.toggle("By Direction", key="tog_monthly")
+                    if m_by_dir:
+                        m_counts = hist_df.groupby(['Month', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                        m_counts['Month_DT'] = pd.to_datetime(m_counts['Month'], format='%b %Y')
+                        m_counts = m_counts.sort_values('Month_DT')
+                        fig_m = px.bar(m_counts, x='Month', y='Count', color='DIRECTION', barmode='group',
+                                      text='Count',
+                                      color_discrete_map=DIR_COLOR_MAP)
+                    else:
+                        m_counts = hist_df.groupby('Month', observed=True).size().reset_index(name='Count')
+                        m_counts['Month_DT'] = pd.to_datetime(m_counts['Month'], format='%b %Y')
+                        m_counts = m_counts.sort_values('Month_DT')
+                        fig_m = px.bar(m_counts, x='Month', y='Count', text='Count',
+                                      color_discrete_sequence=[C_BAR])
                     fig_m.update_traces(textposition='outside')
                     fig_m.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None))
                     st.plotly_chart(fig_m, width="stretch")
 
-                # --- SPECIES DISTRIBUTION (Historical) ---
-                if 'SPECIES' in hist_df.columns and not hist_df['SPECIES'].dropna().empty:
-                    with st.container(border=True):
-                        st.subheader("Historical Volume by Aircraft Species")
-                        hs_counts = hist_df['SPECIES'].value_counts().reset_index()
-                        hs_counts.columns = ['Species', 'Count']
-                        fig_hs = px.pie(hs_counts, values='Count', names='Species', 
-                                      hole=0.4, 
-                                      color_discrete_sequence=px.colors.qualitative.Safe)
-                        fig_hs.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.05, xanchor="center", x=0.5))
-                        st.plotly_chart(fig_hs, width="stretch")
+                
+                
+
+                
     
                 # Daily Volume Drilldown - Only show if exactly one month is selected
                 if len(selected_months) == 1:
                     with st.container(border=True):
-                        st.subheader(f"Daily Volume Distribution: {selected_months[0]}")
-                        d_counts = hist_df.groupby(['Day', 'DIRECTION'], observed=True).size().reset_index(name='Count')
-                        
-                        # Sort days correctly
-                        d_counts = d_counts.sort_values('Day')
-                        
-                        fig_d = px.bar(d_counts, x='Day', y='Count', color='DIRECTION', barmode='group',
-                                      text='Count',
-                                      color_discrete_map={'TAKEOFF': '#2563eb', 'LANDING': '#60a8fb'},
-                                      labels={'Day': 'Date', 'Count': 'Movements'})
+                        _dc1, _dc2 = st.columns([4, 1])
+                        with _dc1:
+                            st.subheader(f"Daily Volume Distribution: {selected_months[0]}")
+                        with _dc2:
+                            d_by_dir = st.toggle("By Direction", key="tog_daily")
+                        if d_by_dir:
+                            d_counts = hist_df.groupby(['Day', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                            d_counts = d_counts.sort_values('Day')
+                            fig_d = px.bar(d_counts, x='Day', y='Count', color='DIRECTION', barmode='group',
+                                          text='Count',
+                                          color_discrete_map=DIR_COLOR_MAP,
+                                          labels={'Day': 'Date', 'Count': 'Movements'})
+                        else:
+                            d_counts = hist_df.groupby('Day', observed=True).size().reset_index(name='Count')
+                            d_counts = d_counts.sort_values('Day')
+                            fig_d = px.bar(d_counts, x='Day', y='Count', text='Count',
+                                          color_discrete_sequence=[C_BAR],
+                                          labels={'Day': 'Date', 'Count': 'Movements'})
                         fig_d.update_traces(textposition='outside')
                         fig_d.update_layout(
-                            xaxis=dict(tickformat='%d %b'), # e.g., 25 Jan
+                            xaxis=dict(tickformat='%d %b'),
                             legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None)
                         )
                         st.plotly_chart(fig_d, width="stretch")
+
+                        # --- Hourly Drilldown ---
+                        st.divider()
+                        _hc1, _hc2 = st.columns([4, 1])
+                        with _hc1:
+                            st.subheader(":material/schedule: Hourly Movement Drilldown")
+                        with _hc2:
+                            h_by_dir = st.toggle("By Direction", key="tog_hourly_hist")
+
+                        # display_df is already filtered to selected_day (hoisted above)
+                        day_df = display_df.copy()
+                        day_df['Hour'] = day_df['DATE TIME LOCAL'].dt.hour
+
+                        if not day_df.empty:
+                            if h_by_dir:
+                                h_counts = day_df.groupby(['Hour', 'DIRECTION'], observed=True).size().reset_index(name='Count')
+                                fig_h = px.bar(h_counts, x='Hour', y='Count', color='DIRECTION', barmode='group',
+                                               text='Count',
+                                               color_discrete_map=DIR_COLOR_MAP,
+                                               labels={'Hour': 'Hour (Local)', 'Count': 'Movements'})
+                            else:
+                                h_counts = day_df.groupby('Hour', observed=True).size().reset_index(name='Count')
+                                fig_h = px.bar(h_counts, x='Hour', y='Count', text='Count',
+                                               color_discrete_sequence=[C_BAR],
+                                               labels={'Hour': 'Hour (Local)', 'Count': 'Movements'})
+
+                            fig_h.update_traces(textposition='outside')
+                            fig_h.update_layout(
+                                xaxis=dict(tickmode='linear', tick0=0, dtick=1,
+                                           ticktext=[f"{h:02d}:00" for h in range(24)],
+                                           tickvals=list(range(24))),
+                                legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5, title=None)
+                            )
+                            st.plotly_chart(fig_h, width="stretch")
+                        else:
+                            st.warning("No data available for the selected day.")
+
                 elif len(selected_months) > 1:
                     st.info(":material/lightbulb: Select a **single month** to view the Daily Volume Distribution.")
                 elif not selected_months and not hist_df.empty:
                     # Optional: show nothing or a generic message when no month selected
                     pass
         
-                # Full Data Table
+                # Full Data Table — filtered to selected day when single month is active
                 with st.expander(":material/search: View Full Data Table"):
-                    st.dataframe(hist_df, use_container_width=True)
+                    flt_cols = st.columns(3)
+                    with flt_cols[0]:
+                        f_op = st.multiselect("Operator", options=sorted(display_df['AIRLINE'].dropna().unique().tolist()), key="hist_log_op")
+                    with flt_cols[1]:
+                        f_hr = st.multiselect("Hour (Local)", options=sorted(display_df['Hour'].dropna().unique().tolist()), key="hist_log_hr")
+                    with flt_cols[2]:
+                        f_dir = st.multiselect("Direction", options=sorted(display_df['DIRECTION'].dropna().unique().tolist()), key="hist_log_dir")
+
+                    log_df = display_df.copy()
+                    if f_op:
+                        log_df = log_df[log_df['AIRLINE'].isin(f_op)]
+                    if f_hr:
+                        log_df = log_df[log_df['Hour'].isin(f_hr)]
+                    if f_dir:
+                        log_df = log_df[log_df['DIRECTION'].isin(f_dir)]
+
+                    st.dataframe(log_df, use_container_width=True, hide_index=True)

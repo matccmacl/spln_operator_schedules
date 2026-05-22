@@ -19,13 +19,13 @@ def test_date_extraction():
             clean_date_str = f"{match.group(1)} {match.group(2)} {match.group(3)}"
             date_object = pd.to_datetime(clean_date_str)
             print(f"Filename: {filename}")
-            print(f"✅ Extracted Date: {date_object.strftime('%Y-%m-%d')}\n")
+            print(f"SUCCESS - Extracted Date: {date_object.strftime('%Y-%m-%d')}\n")
             
             if "14th May" in filename:
                 assert date_object.day == 14
         else:
             print(f"Filename: {filename}")
-            print(f"❌ Match Failed\n")
+            print(f"FAILED - Match Failed\n")
             assert False, f"Failed to match {filename}"
 
     print("Verification Successful!")

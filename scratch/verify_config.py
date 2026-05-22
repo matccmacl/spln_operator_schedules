@@ -11,9 +11,9 @@ def verify_config_switch():
     
     # Check imports
     if "TEST_SHEET_URL" in content and "SHEET_URL" not in content.split("from config import")[1].split("\n")[0]:
-        print("✅ Import correctly updated to use TEST_SHEET_URL and remove SHEET_URL.")
+        print("SUCCESS - Import correctly updated to use TEST_SHEET_URL and remove SHEET_URL.")
     else:
-        print("❌ Import check failed.")
+        print("FAILED - Import check failed.")
         
     # Check usages
     usage_counts = {
@@ -28,9 +28,9 @@ def verify_config_switch():
         print(f"  {var}: {count}")
     
     if usage_counts["TEST_SHEET_URL"] > 1:
-        print("\n✅ TEST_SHEET_URL is being used in multiple locations.")
+        print("\nSUCCESS - TEST_SHEET_URL is being used in multiple locations.")
     else:
-        print("\n❌ TEST_SHEET_URL usage check failed.")
+        print("\nFAILED - TEST_SHEET_URL usage check failed.")
 
 if __name__ == "__main__":
     verify_config_switch()

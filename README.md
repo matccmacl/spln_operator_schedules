@@ -1,19 +1,15 @@
-# 🎈 Blank app template
+# :material/flight: Seaplane Operator Schedule Dashboard
 
-A simple Streamlit app template for you to modify!
+An ETL (Extract, Transform, Load) pipeline designed to process seaplane operator schedules from PDF and Excel formats into a unified high-performance dashboard for operational tracking and visualization.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+### :material/settings: How to run it on your own machine
 
-### How to run it on your own machine
-
-1. Install the requirements
-
-   ```
-   $ pip install -r requirements.txt
+1. **Install the requirements**:
+   ```bash
+   pip install -r requirements.txt
    ```
 
-2. Run the app
-
-   ```
-   $ streamlit run streamlit_app.py
+2. **Run the app**:
+   ```bash
+   streamlit run main.py
    ```
